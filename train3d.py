@@ -6,17 +6,14 @@ import cv2
 import numpy as np
 
 import tensorflow as tf
-from keras import layers
-from keras.models import Model
 from keras.optimizers import Adam
 from keras.callbacks import TensorBoard, EarlyStopping, ModelCheckpoint
 
-from keras.applications.vgg16 import VGG16
-from keras.applications.mobilenet_v2 import MobileNetV2
-
+import clearml
 from clearml import Task
 from clearml import Dataset
 
+import model3d
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-remotely', default=True, action='store_true', help='Train remotely')
@@ -26,7 +23,7 @@ parser.add_argument('-feature-extractor', default='mobilenetv2', help='Feature e
                     choices=['vgg16', 'mobilenetv2'])
 args = parser.parse_args()
 
-
+clearml.Task.add_requirements("requirements.txt")
 task = Task.init(
     project_name='Radius/KITTI-3D',
     task_name=f'baseline {args.feature_extractor} {args.epochs} epochs',
@@ -323,53 +320,9 @@ for obj in all_objs:
     obj['conf_flipped'] = confidence
 
 
-# -------------------------
-# ------- 3D MODEL --------
-# -------------------------
-# Construct the network
-def build_model(input_shape=(224, 224, 3), weights=None, freeze=False, feature_extractor='vgg16'):
-    if feature_extractor == 'mobilenetv2':
-        feature_extractor_model = MobileNetV2(include_top=False, weights=weights, input_shape=input_shape)
-    elif feature_extractor == 'vgg16':
-        feature_extractor_model = VGG16(include_top=False, weights=weights, input_shape=input_shape)
-    else:
-        print(
-            "Requested a non-existing feature extractor model. Either choose from mobilenetv2 and vgg16 or add your own to the code")
-        exit(-1)
-
-    if freeze:
-        for layer in feature_extractor_model.layers:
-            layer.trainable = False
-
-    x = layers.Flatten()(feature_extractor_model.output)
-
-    dimension = layers.Dense(512)(x)
-    dimension = layers.LeakyReLU(alpha=0.1)(dimension)
-    dimension = layers.Dropout(0.5)(dimension)
-    dimension = layers.Dense(3)(dimension)
-    dimension = layers.LeakyReLU(alpha=0.1, name='dimension')(dimension)
-
-    orientation = layers.Dense(256)(x)
-    orientation = layers.LeakyReLU(alpha=0.1)(orientation)
-    orientation = layers.Dropout(0.5)(orientation)
-    orientation = layers.Dense(BIN * 2)(orientation)
-    orientation = layers.LeakyReLU(alpha=0.1)(orientation)
-    orientation = layers.Reshape((BIN, -1))(orientation)
-    orientation = layers.Lambda(l2_normalize, name='orientation')(orientation)
-
-    confidence = layers.Dense(256)(x)
-    confidence = layers.LeakyReLU(alpha=0.1)(confidence)
-    confidence = layers.Dropout(0.5)(confidence)
-    confidence = layers.Dense(BIN, activation='softmax', name='confidence')(confidence)
-
-    model = Model(feature_extractor_model.input, outputs=[dimension, orientation, confidence])
-    model.summary()
-
-    return model
-
 
 # You can replace 'mobilenet' with 'vgg16' to change the feature extractor implementation in build_model().
-model = build_model(input_shape=(224, 224, 3), weights='imagenet', freeze=False, feature_extractor=args.feature_extractor)
+model = model3d.build_model(input_shape=(224, 224, 3), weights='imagenet', freeze=False, feature_extractor=args.feature_extractor)
 
 os.makedirs("models", exist_ok=True)
 checkpoint = ModelCheckpoint(f'/models/checkpoints_weights_{args.feature_extractor}.hdf5', monitor='val_loss', verbose=1,
